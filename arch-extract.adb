@@ -97,7 +97,7 @@ begin -- Extract
             To_Read := Header.Compressed_Length;
             Num_Read := 0;
             First := True;
-            U8_IO.Create (File => Extrac, Mode => U8_IO.Out_File, Name => Header.Name);
+            U8_IO.Create (File => Extrac, Mode => U8_IO.Out_File, Name => Directory & Header.Name);
             Adler_32_Checksums.Reset (Info => Adler);
             Decompress;
             U8_IO.Close (File => Extrac);

@@ -98,18 +98,19 @@ begin -- Update
 
    New_Files : for I in 1 .. File.Last_Index loop
       Make_Header : declare
-         Name   : String renames File.Element (I);
-         Simple : String renames Ada.Directories.Simple_Name (Name);
+         Name : String renames File.Element (I);
 
-         Header     : Header_Info (Name_Length => Simple'Length);
+         Dir_Name : constant String := Directory & Name;
+
+         Header     : Header_Info (Name_Length => Name'Length);
          Compressed : Byte_List;
       begin -- Make_Header
-         if not Ada.Directories.Exists (Name) then
+         if not Ada.Directories.Exists (Dir_Name) then
             Ada.Text_IO.Put_Line (Item => "File " & Name & " does not exist; ignoring");
          else
-            Header.Original_Length := U64 (Ada.Directories.Size (Name) );
-            Header.Name := Simple;
-            Compress (Name => Name, Byte => Compressed);
+            Header.Original_Length := U64 (Ada.Directories.Size (Dir_Name) );
+            Header.Name := Name;
+            Compress (Name => Dir_Name, Byte => Compressed);
             Header.Compressed_Length := U64 (Compressed.Last_Index);
             Write (File => Temp, Header => Header);
             Write (File => Temp, Byte => Compressed);

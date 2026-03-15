@@ -5,26 +5,36 @@
 -- If you find this software useful, please let me know, either through
 -- github.com/jrcarter or directly to pragmada@pragmada.x10hosting.com
 --
+-- Arch, an archive manager
+--
 --  Usage:
---     arch <command> <archive name> {<file name>}
+--     arch <command> <archive name> {<file name>} [-d <directory>]
 --  where <command> is one of
---     u[pdate]  update or add given files to the archive
+--     u[pdate]  update or add given files to the archive from <directory>,
+--               if given [default: current directory]
 --     l[ist]    list the files in the archive
 --     d[elete]  delete the given files from the archive
 --     x[tract]  extract files from the archive [default: all files]
+--               to <directory>, if given [default: current directory]
 --  only the first character of the command is significant
 --  except for u[pdate], the archive must exist
 --
 -- To create an archive, use u[pdate] with an <archive name> that doesn't exist
 -- <file name>(s) are required for u[pdate] and d[elete], optional for x[tract], and ignored for l[ist]
--- <file name>(s) should be simple names, without path, so the files should be in the current directory
--- Extracted files are written in the current directory and any existing files are silently overwritten
+-- <file name>(s) should be simple names, without path, and will be simplified if not
+-- Added/updated files are read from <directory>, if given, or the current directory if not
+-- Extracted files are written in <directory>, if given, or the current directory if not, and any existing files are silently
+-- overwritten
+-- <directory> is ignored for l[ist] and d[elete]
 -- l[ist] lists the files in the archive in String "<" order of name, together with their (uncompressed) sizes in bytes
 --
 -- An archive is modified by writing a new version of the archive in <archive name>.tmp
 -- Once the new version of the archive is successfully written, <archive name> is deleted and <archive name>.tmp is renamed to
 -- <archive name>. If an error is encountered in modifying the archive, the original archive will still exist
 -- The order of files within the archive may change after modification
+--
+-- The Zlib header and checksum are checked for extracted files
+-- If either is incorrect, the assumption is that the archive is invalid or corrupt, so processing stops immediately
 --
 -- An archive is a sequence of files
 -- A file consists of a header followed by the Zlib-format compressed contents of the original file
@@ -117,23 +127,42 @@ procedure Arch is
       -- Empty
    begin -- Usage
       Ada.Text_IO.Put_Line (Item => "Usage:");
-      Ada.Text_IO.Put_Line (Item => "   arch <command> <archive name> {<file name>}");
+      Ada.Text_IO.Put_Line (Item => "   arch <command> <archive name> {<file name>} [-d <directory>]");
       Ada.Text_IO.Put_Line (Item => "where <command> is one of");
-      Ada.Text_IO.Put_Line (Item => "   u[pdate]  update or add given files to the archive");
+      Ada.Text_IO.Put_Line (Item => "   u[pdate]  update or add given files to the archive from <directory>,");
+      Ada.Text_IO.Put_Line (Item => "             if given [default: current directory]");
       Ada.Text_IO.Put_Line (Item => "   l[ist]    list the files in the archive");
       Ada.Text_IO.Put_Line (Item => "   d[elete]  delete the given files from the archive");
       Ada.Text_IO.Put_Line (Item => "   x[tract]  extract files from the archive [default: all files]");
+      Ada.Text_IO.Put_Line (Item => "             to <directory>, if given [default: current directory]");
       Ada.Text_IO.Put_Line (Item => "only the first character of the command is significant");
       Ada.Text_IO.Put_Line (Item => "except for u[pdate], the archive must exist");
    end Usage;
 
+   Dir_Arg : constant String := (if Ada.Command_Line.Argument_Count > 3 and then
+                                    Ada.Command_Line.Argument (Ada.Command_Line.Argument_Count - 1) = "-d"
+                                 then
+                                    Ada.Command_Line.Argument (Ada.Command_Line.Argument_Count)
+                                 else
+                                    "");
+   Last_File : constant Natural := (if Dir_Arg = "" then Ada.Command_Line.Argument_Count
+                                    else Ada.Command_Line.Argument_Count - 2);
+   Dir_Sep   : constant String  := (if Ada.Directories.Current_Directory (1) = '/' then "/" else "\");
+   Directory : constant String  := (if Dir_Arg = "" then ""
+                                    else Dir_Arg & (if Dir_Arg (Dir_Arg'Last) = Dir_Sep (1) then "" else Dir_Sep) );
+
    function File_Names return Name_List is
       Result : Name_List;
    begin -- File_Names
-      All_Names : for I in 3 .. Ada.Command_Line.Argument_Count loop
-         if not Result.Contains (Ada.Command_Line.Argument (I) ) then
-            Result.Append (New_Item => Ada.Command_Line.Argument (I) );
-         end if;
+      All_Names : for I in 3 .. Last_File loop
+         Simplify : begin
+            if not Result.Contains (Ada.Directories.Simple_Name (Ada.Command_Line.Argument (I) ) ) then
+               Result.Append (New_Item => Ada.Directories.Simple_Name (Ada.Command_Line.Argument (I) ) );
+            end if;
+         exception -- Simplify
+         when Ada.Directories.Name_Error =>
+            Ada.Text_IO.Put_Line (Item => "Invalid file name " & Ada.Command_Line.Argument (I) & ": ignoring");
+         end Simplify;
       end loop All_Names;
 
       return Result;
