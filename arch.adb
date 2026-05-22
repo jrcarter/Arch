@@ -68,7 +68,7 @@ procedure Arch is
    -- Output usage information
 
    function File_Names return Name_List;
-   -- Collects Arguments 3 .. Argument_Count into the result, which may be empty
+   -- Collects Arguments 3 .. Last_File into the result, which may be empty
    -- Duplicate Arguments only appear in the result once
 
    procedure Update (Arch_Name : in String; File : in Name_List);

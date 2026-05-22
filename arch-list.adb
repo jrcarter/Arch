@@ -21,7 +21,8 @@ procedure List (Arch_Name : in String) is
    Archive  : U8_IO.File_Type;
    List     : Header_Lists.Vector;
    Max_Name : Natural := 0;
-   Max_Size : Natural := 0;
+   Max_Orig : Natural := 0;
+   Max_Comp : Natural := 0;
 begin -- List
    if Missing (Arch_Name) then
       return;
@@ -49,7 +50,8 @@ begin -- List
          Header : constant Header_Info := List.Element (I);
       begin -- One_Header
          Max_Name := Integer'Max (Max_Name, Header.Name_Length);
-         Max_Size := Integer'Max (Max_Size, Header.Original_Length'Image'Length);
+         Max_Orig := Integer'Max (Max_Orig, Header.Original_Length'Image'Length);
+         Max_Comp := Integer'Max (Max_Comp, Header.Compressed_Length'Image'Length);
       end One_Header;
    end loop Find_Max;
 
@@ -58,7 +60,9 @@ begin -- List
          Header : constant Header_Info := List.Element (I);
       begin -- One_Line
          Ada.Text_IO.Put_Line
-            (Item => Header.Name & Image (Header.Original_Length, Width => Max_Size + Max_Name - Header.Name_Length) );
+            (Item => Header.Name &
+                     Image (Header.Compressed_Length, Width => Max_Comp + Max_Name - Header.Name_Length) &
+                     Image (Header.Original_Length,   Width => Max_Orig) );
       end One_Line;
    end loop Print;
 end List;
