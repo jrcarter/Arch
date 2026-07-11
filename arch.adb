@@ -28,100 +28,18 @@
 -- <directory> is ignored for l[ist] and d[elete]
 -- l[ist] lists the files in the archive in String "<" order of name, together with their (uncompressed) sizes in bytes
 --
--- An archive is modified by writing a new version of the archive in <archive name>.tmp
--- Once the new version of the archive is successfully written, <archive name> is deleted and <archive name>.tmp is renamed to
--- <archive name>. If an error is encountered in modifying the archive, the original archive will still exist
--- The order of files within the archive may change after modification
---
--- The Zlib header and checksum are checked for extracted files
--- If either is incorrect, the assumption is that the archive is invalid or corrupt, so processing stops immediately
---
--- An archive is a sequence of files
--- A file consists of a header followed by the Zlib-format compressed contents of the original file
--- The header contains the uncompressed and compressed sizes of the file and the file's simple name (without path)
-
 with Ada.Command_Line;
-with Ada.Containers.Indefinite_Vectors;
-with Ada.Direct_IO;
 with Ada.Directories;
 with Ada.Text_IO;
+with Arch_Utils;
 
 procedure Arch is
-   package Name_Lists is new Ada.Containers.Indefinite_Vectors (Index_Type => Positive, Element_Type => String);
-   subtype Name_List is Name_Lists.Vector;
-
-   type U64 is mod 2 ** 64;
-
-   subtype File_Name_Length is Integer range 0 .. 2 ** 15 -1;
-
-   type Header_Info (Name_Length : File_Name_Length) is record
-      Compressed_Length : U64; -- Length of compressed data, including zlib header and Adler-32 checksum
-      Original_Length   : U64; -- Length of the original, uncompressed file
-      Name              : String (1 .. Name_Length); -- File name
-   end record;
-
-   type U8 is mod 2 ** 8;
-
-   package U8_IO is new Ada.Direct_IO (Element_Type => U8);
-
    procedure Usage;
    -- Output usage information
 
-   function File_Names return Name_List;
+   function File_Names return Arch_Utils.String_List;
    -- Collects Arguments 3 .. Last_File into the result, which may be empty
    -- Duplicate Arguments only appear in the result once
-
-   procedure Update (Arch_Name : in String; File : in Name_List);
-   -- Updates or adds the files in File to Arch_Name
-
-   procedure List (Arch_Name : in String);
-   -- Lists the files in Arch_Name
-
-   procedure Delete (Arch_Name : in String; File : in Name_List);
-   -- Deletes the files in File from Arch_Name
-
-   procedure Extract (Arch_Name : in String; File : in Name_List);
-   -- Extracts the files in File from Arch_Name
-   -- If File is empty, extracts all files
-
-   use type U8_IO.File_Mode;
-
-   function Next (File : in U8_IO.File_Type) return U64 with
-      Pre => U8_IO.Is_Open (File) and then U8_IO.Mode (File) = U8_IO.In_File;
-   -- Reads a U64 in little-endian format from File
-
-   function Next (File : in U8_IO.File_Type) return File_Name_Length with
-      Pre => U8_IO.Is_Open (File) and then U8_IO.Mode (File) = U8_IO.In_File;
-   -- Reads a File_Name_Length in little-endian format from File
-
-   function Next (File : in U8_IO.File_Type) return Header_Info with
-      Pre => U8_IO.Is_Open (File) and then U8_IO.Mode (File) = U8_IO.In_File;
-   -- Reads a Header_Info from File
-
-   procedure Write (File : in U8_IO.File_Type; Value : in U64) with
-      Pre => U8_IO.Is_Open (File) and then U8_IO.Mode (File) = U8_IO.Out_File;
-   -- Writes Value in little-endian format to File
-
-   procedure Write (File : in U8_IO.File_Type; Value : in File_Name_Length) with
-      Pre => U8_IO.Is_Open (File) and then U8_IO.Mode (File) = U8_IO.Out_File;
-   -- Writes Value in little-endian format to File
-
-   procedure Write (File : in U8_IO.File_Type; Header : in Header_Info) with
-      Pre => U8_IO.Is_Open (File) and then U8_IO.Mode (File) = U8_IO.Out_File;
-   -- Writes Header to File
-
-   procedure Copy (From : in U8_IO.File_Type; To : in U8_IO.File_Type; Count : in U64) with
-      Pre => (U8_IO.Is_Open (From) and U8_IO.Is_Open (To) ) and then
-             (U8_IO.Mode (From) = U8_IO.In_File and U8_IO.Mode (To) = U8_IO.Out_File);
-   -- Reads Count bytes from From and writes them to To
-
-   procedure Skip (File : in U8_IO.File_Type; Count : in U64) with
-      Pre => U8_IO.Is_Open (File) and then U8_IO.Mode (File) = U8_IO.In_File,
-      Inline;
-   -- Skips Count bytes in File
-
-   function Missing (Name : in String) return Boolean;
-   -- If archive Name does not exist, outputs a message and returns True; otherwise, returns False
 
    procedure Usage is
       -- Empty
@@ -151,132 +69,20 @@ procedure Arch is
    Directory : constant String  := (if Dir_Arg = "" then ""
                                     else Dir_Arg & (if Dir_Arg (Dir_Arg'Last) = Dir_Sep (1) then "" else Dir_Sep) );
 
-   function File_Names return Name_List is
-      Result : Name_List;
+   function File_Names return Arch_Utils.String_List is
+      Result : Arch_Utils.String_List;
    begin -- File_Names
       All_Names : for I in 3 .. Last_File loop
          Simplify : begin
-            if not Result.Contains (Ada.Directories.Simple_Name (Ada.Command_Line.Argument (I) ) ) then
-               Result.Append (New_Item => Ada.Directories.Simple_Name (Ada.Command_Line.Argument (I) ) );
-            end if;
+            Result.Append (New_Item => Ada.Directories.Simple_Name (Ada.Command_Line.Argument (I) ) );
          exception -- Simplify
-         when Ada.Directories.Name_Error =>
-            Ada.Text_IO.Put_Line (Item => "Invalid file name " & Ada.Command_Line.Argument (I) & ": ignoring");
+         when Ada.Directories.Name_Error => -- Invalid name; ignore
+            null;
          end Simplify;
       end loop All_Names;
 
       return Result;
    end File_Names;
-
-   procedure Update (Arch_Name : in String; File : in Name_List) is separate;
-
-   procedure List (Arch_Name : in String) is separate;
-
-   procedure Delete (Arch_Name : in String; File : in Name_List) is separate;
-
-   procedure Extract (Arch_Name : in String; File : in Name_List) is separate;
-
-   function Next (File : in U8_IO.File_Type) return U64 is
-      Byte   : U8;
-      Result : U64 := 0;
-      Mult   : U64 := 1;
-   begin -- Next
-      All_Bytes : for I in 1 .. 8 loop
-         U8_IO.Read (File => File, Item => Byte);
-         Result := Result + Mult * U64 (Byte);
-         Mult := 256 * Mult;
-      end loop All_Bytes;
-
-      return Result;
-   end Next;
-
-   function Next (File : in U8_IO.File_Type) return File_Name_Length is
-      Byte   : U8;
-      Result : File_Name_Length;
-   begin -- Next
-      U8_IO.Read (File => File, Item => Byte);
-      Result := Integer (Byte);
-      U8_IO.Read (File => File, Item => Byte);
-      Result := Result + 256 * Integer (Byte);
-
-      return Result;
-   end Next;
-
-   function Next (File : in U8_IO.File_Type) return Header_Info is
-      C_Len : U64              renames Next (File);
-      O_Len : U64              renames Next (File);
-      N_Len : File_Name_Length renames Next (File);
-
-      Result : Header_Info (Name_Length => N_Len);
-      Byte   : U8;
-   begin -- Next
-      Result.Compressed_Length := C_Len;
-      Result.Original_Length := O_Len;
-
-      Read_Name : for I in Result.Name'Range loop
-         U8_IO.Read (File => File, Item => Byte);
-         Result.Name (I) := Character'Val (Byte);
-      end loop Read_Name;
-
-      return Result;
-   end Next;
-
-   procedure Write (File : in U8_IO.File_Type; Value : in U64) is
-      Item : U64 := Value;
-   begin -- Write
-      All_Bytes : for I in 1 .. 8 loop
-         U8_IO.Write (File => File, Item => U8 (Item rem 256) );
-         Item := Item / 256;
-      end loop All_Bytes;
-   end Write;
-
-   procedure Write (File : in U8_IO.File_Type; Value : in File_Name_Length) is
-      Item : File_Name_Length := Value;
-   begin -- Write
-      All_Bytes : for I in 1 .. 2 loop
-         U8_IO.Write (File => File, Item => U8 (Item rem 256) );
-         Item := Item / 256;
-      end loop All_Bytes;
-   end Write;
-
-   procedure Write (File : in U8_IO.File_Type; Header : in Header_Info) is
-      -- Empty
-   begin -- Write
-      Write (File => File, Value => Header.Compressed_Length);
-      Write (File => File, Value => Header.Original_Length);
-      Write (File => File, Value => Header.Name_Length);
-
-      Write_Name : for I in Header.Name'Range loop
-         U8_IO.Write (File => File, Item => Character'Pos (Header.Name (I) ) );
-      end loop Write_Name;
-   end Write;
-
-   procedure Copy (From : in U8_IO.File_Type; To : in U8_IO.File_Type; Count : in U64) is
-      Byte : U8;
-   begin -- Copy
-      All_Bytes : for I in 1 .. Count loop
-         U8_IO.Read (File => From, Item => Byte);
-         U8_IO.Write (File => To, Item => Byte);
-      end loop All_Bytes;
-   end Copy;
-
-   procedure Skip (File : in U8_IO.File_Type; Count : in U64) is
-      -- Empty
-   begin -- Skip
-      U8_IO.Set_Index (File => File, To => U8_IO.Count (U64 (U8_IO.Index (File) ) + Count) );
-   end Skip;
-
-   function Missing (Name : in String) return Boolean is
-      -- Empty
-   begin -- Missing
-      if not Ada.Directories.Exists (Name) then
-         Ada.Text_IO.Put_Line (Item => "Archive " & Name & " does not exist");
-
-         return True;
-      end if;
-
-      return False;
-   end Missing;
 begin -- Arch
   if Ada.Command_Line.Argument_Count < 2 or else (Ada.Command_Line.Argument (1) = "" or Ada.Command_Line.Argument (2) = "") then
       Usage;
@@ -285,21 +91,31 @@ begin -- Arch
    end if;
 
    Get_Args : declare
-      Command   : String    renames Ada.Command_Line.Argument (1);
-      Arch_Name : String    renames Ada.Command_Line.Argument (2);
-      File      : Name_List renames File_Names;
+      Command   : String      renames Ada.Command_Line.Argument (1);
+      Arch_Name : String      renames Ada.Command_Line.Argument (2);
+      File      : Arch_Utils.String_List renames File_Names;
+      Msg       : Arch_Utils.String_List;
+      Content   : Arch_Utils.String_List;
    begin -- Get_Args
       case Command (1) is
       when 'u' =>
-         Update (Arch_Name => Arch_Name, File => File);
+         Arch_Utils.Update (Arch_Name => Arch_Name, File => File, Msg => Msg, Directory => Directory);
       when 'l' =>
-         List (Arch_Name => Arch_Name);
+         Arch_Utils.List (Arch_Name => Arch_Name, Content => Content, Msg => Msg);
+
+         Dump_Content : for I in 1 .. Content.Last_Index loop
+            Ada.Text_IO.Put_Line (Item => Content.Element (I) );
+         end loop Dump_Content;
       when 'd' =>
-         Delete (Arch_Name => Arch_Name, File => File);
+         Arch_Utils.Delete (Arch_Name => Arch_Name, File => File, Msg => Msg);
       when 'x' =>
-         Extract (Arch_Name => Arch_Name, File => File);
+         Arch_Utils.Extract (Arch_Name => Arch_Name, File => File, Msg => Msg, Directory => Directory);
       when others =>
          Usage;
       end case;
+
+      Dump_Msg : for I in 1 .. Msg.Last_Index loop
+         Ada.Text_IO.Put_Line (Item => Msg.Element (I) );
+      end loop Dump_Msg;
    end Get_Args;
 end Arch;
